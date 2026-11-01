@@ -16,6 +16,7 @@ interface HowToUseModalProps {
   isOpen: boolean;
   onClose: () => void;
   onJumpToDesk: () => void;
+  onOpenEditorStep?: (mode: "rough_draft" | "outline" | "manuscript") => void;
   onLaunchPulpit: () => void;
   onOpenAudioModal: () => void;
   onOpenRemoteView: () => void;
@@ -36,6 +37,7 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
   isOpen,
   onClose,
   onJumpToDesk,
+  onOpenEditorStep,
   onLaunchPulpit,
   onOpenAudioModal,
   onOpenRemoteView,
@@ -46,12 +48,12 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
     {
       number: "01",
       title: "Search & Navigate KJV Scripture",
-      subtitle: "Left Column · KJV Reader & Quick Find (⌘K)",
+      subtitle: "Left Column · KJV Reader, Prev/Next Chapter & Quick Find (⌘K)",
       icon: <Compass className="w-4 h-4 text-neutral-900 dark:text-amber-400" />,
       instructions: [
-        "Use the Book, Chapter, and Verse Range (v.Start – v.End) selectors to focus on your preaching pericope.",
+        "Use the Book, Chapter, and ‹ Prev / Next › buttons—or Verse Range (v.Start – v.End)—to focus on your preaching pericope.",
         "Press Cmd+K (or Ctrl+K) or click 'Quick Find' to type any reference (e.g., 'John 3:16', 'Rom 8:28', 'Ps 23:1') and jump directly to that verse.",
-        "Use the instant IndexedDB search bar to find KJV keywords or phrases across the entire local study corpus.",
+        "Click any 'Read ↗' Scripture badge inside the Sermon Editor to automatically jump the KJV Reader to that exact passage.",
       ],
       proTip:
         "Click '+ Card' on any search result or verse row to insert that KJV verse directly into your active sermon outline and manuscript.",
@@ -63,17 +65,17 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
     },
     {
       number: "02",
-      title: "Highlight Verses, Attach Margin Notes & Inspect TSK",
-      subtitle: "Left Column · Exegetical Swatches & Treasury of Scripture Knowledge",
+      title: "Highlights, TSK, Reference Density & Memory Deck",
+      subtitle: "Left Column · Swatches, Cross-References, Density Map & Cloze Recall",
       icon: <BookOpen className="w-4 h-4 text-neutral-900 dark:text-amber-400" />,
       instructions: [
-        "Click any verse in the reader to reveal the 4 Homiletic Swatches: Gold (Promise/Grace), Blue (Duty/Command), Red (Warning/Judgment), and Green (Doctrine).",
-        "Inspect the bottom 'TSK Cross-References' tab to view parallel Scriptures illuminating your selected verse, and click 'Insert Scripture Card into Manuscript'.",
-        "Switch to the 'Margin Notes Tray' tab to attach coordinate-anchored exegetical notes (e.g., Greek/Hebrew insights) to that specific verse.",
+        "Click any verse in the reader to apply 4 Homiletic Swatches: Gold (Promise/Grace), Blue (Duty/Command), Red (Warning/Judgment), and Green (Doctrine).",
+        "Click 'Memory Deck' or '+ Memorize' on any verse to practice pulpit recall with Light, Standard, or Mastery missing-word cloze cards.",
+        "Toggle the 'Density Map' sidebar graph to inspect which passages and Bible books are most frequently cited across all your saved sermons.",
       ],
       proTip:
-        "Use the swatch filter bar at the top of the Scripture Desk ('All | Promise | Duty | Warning | Doctrine') to isolate highlighted verses.",
-      actionLabel: "Explore TSK & Highlights",
+        "Inspect the bottom 'TSK Cross-References' and 'Margin Notes' tabs to attach coordinate-anchored exegetical insights to any verse.",
+      actionLabel: "Explore TSK, Density & Memory Deck",
       onAction: () => {
         onJumpToDesk();
         onClose();
@@ -81,52 +83,60 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
     },
     {
       number: "03",
-      title: "Initialize or Scaffold a Homiletical Structure",
-      subtitle: "Right Column · Expository, Textual & Topical Templates",
-      icon: <ListTree className="w-4 h-4 text-neutral-900 dark:text-amber-400" />,
+      title: "Brainstorm in the Rough Draft & Thought Organizer",
+      subtitle: "Step 1 · Turn Unstructured Notes into Titles, Illustrations & Prayers",
+      icon: <Sparkles className="w-4 h-4 text-neutral-900 dark:text-amber-400" />,
       instructions: [
-        "Select 'Template: Expository', 'Template: Textual', or 'Template: Topical' from the top dropdown and click 'New [Style] Sermon' to initialize a fresh sermon with pre-filled structural blocks.",
-        "In Outline Mode, drag and drop block cards to reorder points, use the indent/outdent arrows to nest sub-points or illustrations, and assign KJV references to each block.",
-        "Switch to Manuscript Mode at any time (or click 'Compile Outline into Manuscript') to draft your full spoken pulpit prose with live word count and delivery time estimates.",
+        "Click '1. Rough Draft' in the top bar or editor tabs to type raw sermon ideas, burdens, stories, and verse fragments.",
+        "Click 'Organize My Thoughts' to generate 4 homiletic title suggestions, a distilled Big Idea, structured outline divisions, vivid illustrations, KJV cross-references, and closing pastoral prayers.",
+        "Click 'Use Title', '+ Add Illustration', '+ Insert KJV Card', '+ Append Prayer', or 'Apply Full Organized Structure' with one click.",
       ],
       proTip:
-        "Estimated preaching duration is calculated at a natural 130 words-per-minute pulpit cadence.",
-      actionLabel: "Go to Homiletic Editor",
+        "You can click any suggested KJV reference in the organizer to read it in context in the left KJV column before inserting.",
+      actionLabel: "Open 1. Rough Draft Organizer",
       onAction: () => {
-        onJumpToDesk();
+        if (onOpenEditorStep) {
+          onOpenEditorStep("rough_draft");
+        } else {
+          onJumpToDesk();
+        }
         onClose();
       },
     },
     {
       number: "04",
-      title: "Ideate Outlines with the Gemini Homiletic Assistant",
-      subtitle: "Right Sidebar · AI Sermon Outliner",
-      icon: <Sparkles className="w-4 h-4 text-neutral-900 dark:text-amber-400" />,
+      title: "Structure Outline Blocks & Draft Full Manuscript",
+      subtitle: "Steps 2 & 3 · Templates, Drag-and-Drop Outline & Manuscript Prose",
+      icon: <ListTree className="w-4 h-4 text-neutral-900 dark:text-amber-400" />,
       instructions: [
-        "Open the 'AI Outliner' sidebar on the right side of the Homiletic Editor.",
-        "Enter a KJV passage or doctrinal topic (e.g., 'Ephesians 2:8-10' or 'Justification by Faith'), choose Expository, Textual, or Topical mode, and add optional pastoral focus notes.",
-        "Click 'Generate Outline' to produce a complete homiletical breakdown (Hook, Context, Big Idea, Divisions, Illustrations, Application, and Call to Action), then click 'Apply Outline to Editor'.",
+        "Select 'Template: Expository', 'Textual', or 'Topical' to scaffold a new sermon or reset structural blocks.",
+        "In '2. Outline', drag and drop cards to reorder points, indent/outdent sub-points, or open the 'AI Outliner' drawer for passage-based homiletic generation.",
+        "Switch to '3. Manuscript' (or click 'Sync Outline → Manuscript') to write your spoken pulpit prose with live word count and 130 WPM time estimates.",
       ],
       proTip:
-        "Applying an AI outline populates both your draggable Outline Mode blocks and your compiled Manuscript Mode text simultaneously.",
-      actionLabel: "Open Editor & AI Outliner",
+        "Use the top 'Split Desk | KJV Focus | Editor Focus' layout toggle to expand the editor to 100% screen width while writing.",
+      actionLabel: "Open 2. Outline Editor",
       onAction: () => {
-        onJumpToDesk();
+        if (onOpenEditorStep) {
+          onOpenEditorStep("outline");
+        } else {
+          onJumpToDesk();
+        }
         onClose();
       },
     },
     {
       number: "05",
       title: "Deliver from the OLED Lectern Pulpit & Pair Mobile Remote",
-      subtitle: "Full-Screen Teleprompter · PeerJS / WebRTC Smartphone Controller",
+      subtitle: "Step 4 · Full-Screen Teleprompter & PeerJS / WebRTC Smartphone Controller",
       icon: <Monitor className="w-4 h-4 text-neutral-900 dark:text-amber-400" />,
       instructions: [
-        "Click 'Launch Lectern Pulpit' in the top right to enter the distraction-free pure OLED black delivery view.",
+        "Click '4. Pulpit' in the top bar to enter the distraction-free pure OLED black delivery view.",
         "Adjust font size (18px–38px), line spacing, Crisp White vs. Warm Amber typography, and toggle smooth Auto-Scroll or section-by-section card mode.",
-        "Click 'Remote: XXXX' in the lectern header to display the 4-character Room Code and QR code. Scan the QR code with your smartphone (or open Mobile Remote) for thumb-friendly wireless control.",
+        "Click 'Remote: XXXX' in the lectern header to scan the QR code with your smartphone for thumb-friendly wireless WebRTC control.",
       ],
       proTip:
-        "Your phone acts as a zero-latency WebRTC controller to advance sections, pause/resume auto-scroll, toggle the preaching timer, and scale font size.",
+        "Your phone acts as a zero-latency controller to advance sections, pause/resume auto-scroll, toggle the preaching timer, and scale font size.",
       actionLabel: "Launch Lectern Pulpit",
       onAction: () => {
         onLaunchPulpit();
@@ -136,15 +146,15 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
     {
       number: "06",
       title: "Record Pulpit Audio & Run Post-Sermon Gemini Analysis",
-      subtitle: "Audio & Transcript · Multimodal KJV Transcription & Delivery Comparison",
+      subtitle: "Step 5 · Multimodal KJV Transcription & Delivery Comparison",
       icon: <Mic className="w-4 h-4 text-neutral-900 dark:text-amber-400" />,
       instructions: [
-        "Click 'Record Audio' in the Lectern Pulpit (or open 'Audio & Transcript' from the top bar) to capture live sermon audio via HTML5 MediaRecorder or upload an audio file.",
+        "Click 'Record Audio' in the Lectern Pulpit (or open '5. Audio' from the top bar) to capture live sermon audio via HTML5 MediaRecorder or upload an audio file.",
         "After preaching, click 'Transcribe & Analyze with Gemini'. Your prepared manuscript is automatically injected as contextual vocabulary ground truth.",
-        "Review the KJV-accurate timestamped spoken transcript alongside the Homiletical Delivery Comparison (manuscript alignment score, delivered points, skipped points, spontaneous ad-libs, and pacing notes).",
+        "Review the KJV-accurate timestamped spoken transcript alongside the Homiletical Delivery Comparison (alignment score, delivered points, skipped points, spontaneous ad-libs, and pacing notes).",
       ],
       proTip:
-        "All sermons, KJV highlights, margin notes, and audio recordings are persisted locally in your browser's IndexedDB via Dexie.js.",
+        "All sermons, KJV highlights, margin notes, memory verses, and audio recordings are persisted 100% locally in IndexedDB.",
       actionLabel: "Open Audio & Transcript Pipeline",
       onAction: () => {
         onOpenAudioModal();
@@ -169,8 +179,8 @@ export const HowToUseModal: React.FC<HowToUseModalProps> = ({
               How to Use Verbum — Step-by-Step Homiletic &amp; Pulpit Workflow
             </h2>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-              Complete guide from KJV exegesis and outlining to OLED lectern delivery,
-              WebRTC remote control, and post-sermon audio transcription
+              Complete guide from KJV exegesis and rough-draft organization to OLED lectern
+              delivery, WebRTC remote control, and post-sermon audio transcription
             </p>
           </div>
           <button

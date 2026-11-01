@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   GripVertical,
   Plus,
@@ -20,6 +20,7 @@ import {
   BookOpen,
   Quote,
   Flame,
+  ArrowUpRight,
 } from "lucide-react";
 import {
   buildManuscriptFromBlocks,
@@ -30,6 +31,8 @@ import {
   type PreachingMode,
 } from "../db/db";
 
+export type EditorSubMode = "rough_draft" | "outline" | "manuscript";
+
 interface HomileticEditorProps {
   sermon: SermonDocument;
   allSermons: SermonDocument[];
@@ -37,6 +40,9 @@ interface HomileticEditorProps {
   onCreateNewSermon: (templateMode?: PreachingMode) => void;
   onDeleteSermon: (id: string) => void;
   onUpdateSermon: (updated: SermonDocument) => void;
+  activeEditorMode?: EditorSubMode;
+  onChangeEditorMode?: (mode: EditorSubMode) => void;
+  onNavigateToScriptureRef?: (ref: string) => void;
 }
 
 interface GeneratedOutlineResponse {
@@ -149,14 +155,25 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
   onCreateNewSermon,
   onDeleteSermon,
   onUpdateSermon,
+  activeEditorMode,
+  onChangeEditorMode,
+  onNavigateToScriptureRef,
 }) => {
-  const [editorMode, setEditorMode] = useState<
-    "rough_draft" | "outline" | "manuscript"
-  >("outline");
+  const [internalEditorMode, setInternalEditorMode] =
+    useState<EditorSubMode>("outline");
+
+  const editorMode = activeEditorMode || internalEditorMode;
+  const setEditorMode = (nextMode: EditorSubMode) => {
+    setInternalEditorMode(nextMode);
+    if (onChangeEditorMode) {
+      onChangeEditorMode(nextMode);
+    }
+  };
+
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [isAiSidebarOpen, setIsAiSidebarOpen] = useState<boolean>(true);
+  const [isAiSidebarOpen, setIsAiSidebarOpen] = useState<boolean>(false);
   const [selectedTemplateStyle, setSelectedTemplateStyle] =
-    useState<PreachingMode>("Expository");
+    useState<PreachingMode>(sermon.preachingMode || "Expository");
 
   // Gemini Homiletic Assistant Sidebar State
   const [aiInputPassage, setAiInputPassage] = useState<string>(
@@ -178,6 +195,15 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
   const [organizedResult, setOrganizedResult] =
     useState<OrganizedDraftResponse | null>(null);
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
+
+  // Keep local AI & template controls synchronized when user switches active sermon
+  useEffect(() => {
+    setAiInputPassage(sermon.primaryText || "Romans 8:28–39");
+    setAiPreachingMode(sermon.preachingMode || "Expository");
+    setSelectedTemplateStyle(sermon.preachingMode || "Expository");
+    setAiError(null);
+    setOrganizeError(null);
+  }, [sermon.id]);
 
   const triggerToast = (msg: string) => {
     setFeedbackToast(msg);
@@ -224,6 +250,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
       manuscript: syncedManuscript,
       updatedAt: Date.now(),
     });
+    triggerToast(`Applied ${mode} structural blocks to sermon.`);
   };
 
   // Block operations
@@ -302,6 +329,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
     );
     updateField("manuscript", generated);
     setEditorMode("manuscript");
+    triggerToast("Compiled Outline blocks into full Manuscript.");
   };
 
   // Gemini Rough Draft & Thought Organizer API Call
@@ -325,7 +353,8 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
         body: JSON.stringify({
           roughDraft: draftText,
           primaryText: sermon.primaryText,
-          mode: sermon.preachingMode,
+          preachingMode: sermon.preachingMode,
+          currentTitle: sermon.title,
         }),
       });
 
@@ -496,7 +525,6 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
         indent: 0,
       });
 
-      // Attach matching illustration if available
       if (organizedResult.illustrations[idx]) {
         const ill = organizedResult.illustrations[idx];
         newBlocks.push({
@@ -508,7 +536,6 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
         });
       }
 
-      // Attach matching additional KJV reference if available
       if (organizedResult.additionalScriptures[idx]) {
         const scr = organizedResult.additionalScriptures[idx];
         newBlocks.push({
@@ -533,7 +560,6 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
       }
     });
 
-    // Append any remaining additional scriptures
     if (
       organizedResult.additionalScriptures.length >
       organizedResult.organizedDivisions.length
@@ -552,7 +578,6 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
         });
     }
 
-    // Append the primary closing prayer
     if (organizedResult.closingPrayers[0]) {
       const prayer = organizedResult.closingPrayers[0];
       newBlocks.push({
@@ -708,6 +733,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
     });
 
     setAppliedSuccess(true);
+    triggerToast("Applied AI Outline to Editor & Manuscript!");
     setTimeout(() => setAppliedSuccess(false), 2500);
   };
 
@@ -716,16 +742,16 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
       aria-label="Homiletic Editor & Gemini Assistant"
       className="flex flex-col h-full bg-white dark:bg-black overflow-hidden transition-colors"
     >
-      {/* Top Sermon Document Bar & Template Selection Controls */}
-      <div className="p-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-950 space-y-3">
-        {/* Row 1: Sermon Switcher, Template Selection Dropdown for New Sermon, Mode Toggle & AI Sidebar Toggle */}
+      {/* Top Sermon Document Bar & Mode Switcher */}
+      <div className="p-3.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-950 space-y-2.5">
+        {/* Row 1: Sermon Switcher, New Template Sermon, Mode Tabs & AI Outliner Toggle */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <select
               aria-label="Select Active Sermon"
               value={sermon.id}
               onChange={(e) => onSelectSermon(e.target.value)}
-              className="h-8 px-2.5 text-xs font-semibold bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400 max-w-[210px] truncate"
+              className="h-8 px-2.5 text-xs font-semibold bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400 max-w-[200px] truncate"
             >
               {allSermons.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -744,11 +770,11 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                   setSelectedTemplateStyle(chosen);
                 }}
                 title={TEMPLATE_STYLE_DESCRIPTIONS[selectedTemplateStyle]}
-                className="h-8 px-2.5 text-xs font-medium bg-white dark:bg-black text-neutral-800 dark:text-neutral-200 border-r border-neutral-300 dark:border-neutral-800 focus:outline-none cursor-pointer"
+                className="h-8 px-2 text-xs font-medium bg-white dark:bg-black text-neutral-800 dark:text-neutral-200 border-r border-neutral-300 dark:border-neutral-800 focus:outline-none cursor-pointer"
               >
-                <option value="Expository">Template: Expository</option>
-                <option value="Textual">Template: Textual</option>
-                <option value="Topical">Template: Topical</option>
+                <option value="Expository">Expository</option>
+                <option value="Textual">Textual</option>
+                <option value="Topical">Topical</option>
               </select>
 
               <button
@@ -758,7 +784,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                 className="h-8 px-2.5 text-xs font-semibold bg-neutral-900 dark:bg-amber-400 text-white dark:text-black hover:bg-neutral-800 dark:hover:bg-amber-300 transition-colors flex items-center gap-1 whitespace-nowrap shrink-0"
               >
                 <FolderPlus className="w-3.5 h-3.5" />
-                <span>New {selectedTemplateStyle} Sermon</span>
+                <span>+ New</span>
               </button>
             </div>
 
@@ -774,51 +800,51 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Switchable Views: Rough Draft & Organizer vs Outline Mode vs Manuscript Mode */}
-            <div className="flex items-center gap-1 bg-neutral-200/80 dark:bg-neutral-900 p-0.5 rounded border border-neutral-300 dark:border-neutral-800">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Step-by-Step Editor Mode Switcher: 1. Rough Draft -> 2. Outline -> 3. Manuscript */}
+            <div className="flex items-center gap-0.5 bg-neutral-200/80 dark:bg-neutral-900 p-0.5 rounded border border-neutral-300 dark:border-neutral-800">
               <button
                 type="button"
                 onClick={() => setEditorMode("rough_draft")}
-                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1 whitespace-nowrap shrink-0 ${
                   editorMode === "rough_draft"
-                    ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-amber-400 shadow-xs"
+                    ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-amber-400 shadow-xs font-semibold"
                     : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
                 }`}
               >
                 <Lightbulb className="w-3.5 h-3.5" />
-                <span>Rough Draft &amp; Organizer</span>
+                <span>1. Rough Draft Organizer</span>
               </button>
               <button
                 type="button"
                 onClick={() => setEditorMode("outline")}
-                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1 whitespace-nowrap shrink-0 ${
                   editorMode === "outline"
-                    ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-xs"
+                    ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-xs font-semibold"
                     : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
                 }`}
               >
                 <ListTree className="w-3.5 h-3.5" />
-                <span>Outline ({sermon.blocks.length})</span>
+                <span>2. Outline ({sermon.blocks.length})</span>
               </button>
               <button
                 type="button"
                 onClick={() => setEditorMode("manuscript")}
-                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1 whitespace-nowrap shrink-0 ${
                   editorMode === "manuscript"
-                    ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-xs"
+                    ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white shadow-xs font-semibold"
                     : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
                 }`}
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span>Manuscript ({wordCount}w)</span>
+                <span>3. Manuscript ({wordCount}w)</span>
               </button>
             </div>
 
             <button
               type="button"
               onClick={() => setIsAiSidebarOpen((prev) => !prev)}
-              className={`h-8 px-3 text-xs font-medium rounded border transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              className={`h-8 px-2.5 text-xs font-medium rounded border transition-colors flex items-center gap-1 whitespace-nowrap shrink-0 ${
                 isAiSidebarOpen
                   ? "bg-neutral-900 dark:bg-amber-400 text-white dark:text-black border-neutral-900 dark:border-amber-400"
                   : "bg-white dark:bg-black text-neutral-800 dark:text-neutral-200 border-neutral-300 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900"
@@ -835,33 +861,44 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
           </div>
         </div>
 
-        {/* Row 2: Sermon Title & Primary Text Inputs */}
+        {/* Row 2: Sermon Title & Primary Text Inputs (+ Quick Jump to KJV Reader) */}
         <div className="grid grid-cols-12 gap-2">
-          <div className="col-span-8">
+          <div className="col-span-7 sm:col-span-8">
             <input
               type="text"
               value={sermon.title}
               onChange={(e) => updateField("title", e.target.value)}
               placeholder="Sermon Title..."
-              className="w-full h-9 px-3 text-sm font-bold bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
+              className="w-full h-8 px-3 text-xs sm:text-sm font-bold bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
             />
           </div>
-          <div className="col-span-4">
+          <div className="col-span-5 sm:col-span-4 flex items-center gap-1">
             <input
               type="text"
               value={sermon.primaryText}
               onChange={(e) => updateField("primaryText", e.target.value)}
               placeholder="Primary Text (e.g. Romans 8:28-39)"
-              className="w-full h-9 px-3 text-xs font-mono-tabular font-semibold bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-amber-400 focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
+              className="w-full h-8 px-2.5 text-xs font-mono-tabular font-semibold bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-amber-400 focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
             />
+            {onNavigateToScriptureRef && sermon.primaryText && (
+              <button
+                type="button"
+                onClick={() => onNavigateToScriptureRef(sermon.primaryText)}
+                title={`Jump KJV Reader to ${sermon.primaryText}`}
+                className="h-8 px-2 text-[11px] font-medium bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-700 dark:text-amber-400 hover:bg-neutral-100 dark:hover:bg-neutral-900 shrink-0 flex items-center gap-0.5"
+              >
+                <span>Read</span>
+                <ArrowUpRight className="w-3 h-3" />
+              </button>
+            )}
           </div>
         </div>
 
         {/* Row 3: Active Sermon Scaffolding Controls & Delivery Metrics */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400 mr-1">
-              Apply Structure to Current Sermon:
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[11px] font-medium text-neutral-500 dark:text-neutral-400 mr-1">
+              Scaffold Blocks:
             </span>
             {(["Expository", "Textual", "Topical"] as PreachingMode[]).map(
               (mode) => (
@@ -870,20 +907,20 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                   type="button"
                   onClick={() => applyTemplateScaffold(mode)}
                   title={TEMPLATE_STYLE_DESCRIPTIONS[mode]}
-                  className={`px-2.5 py-1 text-xs font-medium rounded border transition-colors whitespace-nowrap shrink-0 ${
+                  className={`px-2 py-0.5 text-[11px] font-medium rounded border transition-colors whitespace-nowrap shrink-0 ${
                     sermon.preachingMode === mode
                       ? "bg-neutral-900 dark:bg-white text-white dark:text-black border-neutral-900 dark:border-white"
                       : "bg-white dark:bg-black text-neutral-700 dark:text-neutral-300 border-neutral-300 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900"
                   }`}
                 >
-                  {mode} Blocks
+                  {mode}
                 </button>
               )
             )}
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 font-mono-tabular">
-            <span>{sermon.preachingMode} Style</span>
+          <div className="flex items-center gap-2 text-[11px] text-neutral-500 dark:text-neutral-400 font-mono-tabular">
+            <span>{sermon.preachingMode}</span>
             <span aria-hidden="true">·</span>
             <span>{wordCount} words</span>
             <span aria-hidden="true">·</span>
@@ -894,7 +931,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
 
       {/* Toast Notification Banner */}
       {feedbackToast && (
-        <div className="px-4 py-2 bg-emerald-700 text-white text-xs font-medium flex items-center justify-between">
+        <div className="px-4 py-2 bg-emerald-700 text-white text-xs font-medium flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <Check className="w-3.5 h-3.5 shrink-0" />
             <span>{feedbackToast}</span>
@@ -914,7 +951,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
         {/* Main Editor Column */}
         <div className="flex-1 flex flex-col min-w-0 overflow-y-auto p-5 space-y-4">
           {/* Homiletical Big Idea Banner */}
-          <div className="p-3.5 bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded space-y-1.5">
+          <div className="p-3 bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-[11px] font-semibold text-neutral-600 dark:text-amber-400">
                 Homiletical &ldquo;Big Idea&rdquo; / Central Doctrinal Proposition (
@@ -927,7 +964,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                   className="text-[11px] font-medium text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white flex items-center gap-1 underline whitespace-nowrap shrink-0"
                 >
                   <RefreshCw className="w-3 h-3" />
-                  <span>Compile Outline into Manuscript</span>
+                  <span>Compile Outline into Manuscript →</span>
                 </button>
               )}
             </div>
@@ -941,7 +978,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
           </div>
 
           {editorMode === "rough_draft" ? (
-            /* ROUGH DRAFT & THOUGHT ORGANIZER MODE */
+            /* 1. ROUGH DRAFT & THOUGHT ORGANIZER MODE */
             <div className="space-y-5">
               {/* Scratchpad Input Card */}
               <div className="p-4 bg-neutral-50/70 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 rounded space-y-3">
@@ -950,16 +987,15 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                     <h3 className="text-xs font-bold text-neutral-900 dark:text-white flex items-center gap-1.5">
                       <Lightbulb className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                       <span>
-                        Sermon Ideas Rough Draft &amp; Thought Organizer
+                        Step 1: Sermon Ideas Rough Draft &amp; Thought Organizer
                       </span>
                     </h3>
                     <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
-                      Type or paste your unstructured sermon ideas, themes,
-                      burdened questions, or verse fragments. Gemini will
-                      organize your thoughts into{" "}
+                      Type your unstructured sermon ideas, themes, or verse
+                      notes below. Gemini will organize your thoughts into{" "}
                       <strong className="text-neutral-800 dark:text-neutral-200">
                         title suggestions, structured divisions, illustrations,
-                        additional KJV reference scriptures, and closing prayers
+                        additional KJV scriptures, and closing prayers
                       </strong>
                       .
                     </p>
@@ -968,7 +1004,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                   {/* Quick Sample Draft Loaders */}
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                      Load Sample Notes:
+                      Sample Notes:
                     </span>
                     {SAMPLE_ROUGH_DRAFTS.map((sample) => (
                       <button
@@ -1189,9 +1225,16 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                               <span className="text-xs font-bold text-neutral-900 dark:text-white">
                                 {div.heading}
                               </span>
-                              <span className="text-[11px] font-mono-tabular text-neutral-500 dark:text-amber-400 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onNavigateToScriptureRef &&
+                                  onNavigateToScriptureRef(div.scriptureRef)
+                                }
+                                className="text-[11px] font-mono-tabular text-neutral-600 dark:text-amber-400 hover:underline shrink-0"
+                              >
                                 {div.scriptureRef}
-                              </span>
+                              </button>
                             </div>
                             <p className="text-xs text-neutral-700 dark:text-neutral-300 leading-relaxed">
                               {div.exposition}
@@ -1291,9 +1334,17 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                               className="p-3 bg-amber-50/40 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-700/60 rounded space-y-1.5"
                             >
                               <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-mono-tabular font-bold text-neutral-900 dark:text-amber-400">
-                                  {scr.ref} (KJV)
-                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onNavigateToScriptureRef &&
+                                    onNavigateToScriptureRef(scr.ref)
+                                  }
+                                  className="text-xs font-mono-tabular font-bold text-neutral-900 dark:text-amber-400 hover:underline flex items-center gap-1"
+                                >
+                                  <span>{scr.ref} (KJV)</span>
+                                  <ArrowUpRight className="w-3 h-3" />
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -1367,11 +1418,11 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
               )}
             </div>
           ) : editorMode === "outline" ? (
-            /* OUTLINE MODE: Hierarchical Drag-and-Drop Block Cards */
+            /* 2. OUTLINE MODE: Hierarchical Drag-and-Drop Block Cards */
             <div className="space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">
-                  Hierarchical Sermon Blocks (Drag to reorder or indent)
+                  Step 2: Hierarchical Sermon Blocks (Drag to reorder or indent)
                 </span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button
@@ -1486,6 +1537,18 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                           placeholder="Ref (e.g. Rom 8:28)"
                           className="w-28 h-7 px-2 text-[11px] font-mono-tabular bg-neutral-50 dark:bg-black border border-neutral-200 dark:border-neutral-800 rounded text-neutral-700 dark:text-amber-400 focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
                         />
+                        {onNavigateToScriptureRef && block.scriptureRef && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onNavigateToScriptureRef(block.scriptureRef!)
+                            }
+                            title={`Open ${block.scriptureRef} in KJV Reader`}
+                            className="p-1 text-neutral-400 hover:text-neutral-900 dark:hover:text-amber-400"
+                          >
+                            <ArrowUpRight className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleIndentBlock(index, -1)}
@@ -1551,10 +1614,10 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
               })}
             </div>
           ) : (
-            /* MANUSCRIPT MODE: Full Pulpit Prose Editor */
+            /* 3. MANUSCRIPT MODE: Full Pulpit Prose Editor */
             <div className="flex-1 flex flex-col space-y-2 min-h-[420px]">
               <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-neutral-200 dark:border-neutral-800">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
                     onClick={() =>
@@ -1605,8 +1668,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
                 </div>
 
                 <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                  Used as ground truth for Pulpit Teleprompter &amp; Gemini
-                  Audio Analysis
+                  Ground truth for Pulpit Teleprompter &amp; Gemini Audio Analysis
                 </span>
               </div>
 
@@ -1624,7 +1686,7 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
         {isAiSidebarOpen && (
           <aside
             aria-label="Gemini Homiletic Assistant"
-            className="w-[340px] xl:w-[380px] border-l border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-950 flex flex-col shrink-0 overflow-y-auto"
+            className="w-[330px] xl:w-[360px] border-l border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-950 flex flex-col shrink-0 overflow-y-auto"
           >
             <div className="p-4 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
               <div className="flex items-center justify-between">
@@ -1640,13 +1702,13 @@ export const HomileticEditor: React.FC<HomileticEditorProps> = ({
               </div>
               <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1 leading-normal">
                 Generate a structured Expository, Textual, or Topical sermon
-                outline from a passage, or switch to{" "}
+                outline from a passage, or use{" "}
                 <button
                   type="button"
                   onClick={() => setEditorMode("rough_draft")}
                   className="underline font-semibold text-neutral-900 dark:text-amber-400"
                 >
-                  Rough Draft &amp; Organizer
+                  1. Rough Draft Organizer
                 </button>{" "}
                 to organize your own sermon notes.
               </p>

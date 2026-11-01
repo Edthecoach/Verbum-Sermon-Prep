@@ -40,6 +40,7 @@ import {
 interface ScriptureDeskProps {
   onInsertScriptureCard: (ref: string, text: string, noteContext?: string) => void;
   allSermons?: SermonDocument[];
+  externalJumpRef?: { ref: string; timestamp: number } | null;
 }
 
 interface PassageDensityItem {
@@ -119,7 +120,7 @@ const BOOK_ALIASES: Record<string, string> = {
 /**
  * Extracts normalized Scripture reference tokens from a string (e.g. "Romans 8:28–30; Genesis 50:20")
  */
-function extractReferencesFromText(rawText: string): {
+export function extractReferencesFromText(rawText: string): {
   canonicalRef: string;
   book: string;
   chapter: number;
@@ -134,7 +135,7 @@ function extractReferencesFromText(rawText: string): {
   }[] = [];
 
   const regex =
-    /\b([1-3]?\s*[A-Za-z]+)\s+(\d+):(\d+)(?:[\u2013\u2014\-](\d+))?/g;
+    /\b([1-3]?\s*[A-Za-z]+)\s+(\d+)(?::(\d+)(?:[\u2013\u2014\-](\d+))?)?/g;
   let match: RegExpExecArray | null;
 
   while ((match = regex.exec(rawText)) !== null) {
@@ -146,14 +147,16 @@ function extractReferencesFromText(rawText: string): {
     if (!resolvedBook) continue;
 
     const chapter = Number(match[2]);
-    const startVerse = Number(match[3]);
+    const startVerse = match[3] ? Number(match[3]) : 1;
     const endVerse = match[4] ? Number(match[4]) : null;
 
     if (Number.isNaN(chapter) || Number.isNaN(startVerse)) continue;
 
-    const canonicalRef = endVerse
-      ? `${resolvedBook} ${chapter}:${startVerse}–${endVerse}`
-      : `${resolvedBook} ${chapter}:${startVerse}`;
+    const canonicalRef = match[3]
+      ? endVerse
+        ? `${resolvedBook} ${chapter}:${startVerse}–${endVerse}`
+        : `${resolvedBook} ${chapter}:${startVerse}`
+      : `${resolvedBook} ${chapter}:1`;
 
     results.push({
       canonicalRef,
@@ -198,7 +201,6 @@ function buildClozeTokens(text: string, difficulty: ClozeDifficulty): ClozeToken
       } else if (difficulty === "standard") {
         isBlank = substantiveCounter % 2 === 1;
       } else {
-        // mastery: blank ~75% of substantive words
         isBlank = substantiveCounter % 4 !== 0;
       }
     }
@@ -217,6 +219,7 @@ function buildClozeTokens(text: string, difficulty: ClozeDifficulty): ClozeToken
 export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
   onInsertScriptureCard,
   allSermons,
+  externalJumpRef,
 }) => {
   const [allVerses, setAllVerses] = useState<KJVerseRecord[]>([]);
   const [localSermons, setLocalSermons] = useState<SermonDocument[]>([]);
@@ -259,7 +262,8 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
     new Set()
   );
   const [isAllWordsRevealed, setIsAllWordsRevealed] = useState<boolean>(false);
-  const [periodicIntervalSec, setPeriodicIntervalSec] = useState<number>(60); // 0 = paused, 45 = 45s, 60 = 1m, 120 = 2m
+  // Default to 0 (On-Demand) so the reader never unexpectedly jumps unless periodic timer is enabled
+  const [periodicIntervalSec, setPeriodicIntervalSec] = useState<number>(0);
   const [isPeriodicRecallPopupOpen, setIsPeriodicRecallPopupOpen] =
     useState<boolean>(false);
   const [secondsUntilNextRecall, setSecondsUntilNextRecall] = useState<number>(60);
@@ -294,6 +298,35 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
     loadStudyData();
   }, []);
 
+  // Handle external jump requests from the Homiletic Editor (e.g. clicking a Scripture ref badge)
+  useEffect(() => {
+    if (!externalJumpRef || !externalJumpRef.ref || allVerses.length === 0) return;
+    const parsed = extractReferencesFromText(externalJumpRef.ref);
+    if (parsed.length > 0) {
+      const target = parsed[0];
+      const exactMatch =
+        allVerses.find(
+          (v) =>
+            v.book === target.book &&
+            v.chapter === target.chapter &&
+            v.verse === target.verse
+        ) ||
+        allVerses.find(
+          (v) => v.book === target.book && v.chapter === target.chapter
+        ) ||
+        allVerses.find((v) => v.book === target.book);
+
+      if (exactMatch) {
+        pendingScrollVerseIdRef.current = exactMatch.id;
+        setFilterSwatch("all");
+        setSelectedBook(exactMatch.book);
+        setSelectedChapter(exactMatch.chapter);
+        setSelectedVerse(exactMatch);
+        setSearchQuery("");
+      }
+    }
+  }, [externalJumpRef, allVerses]);
+
   // Reset revealed words whenever active memory card or difficulty changes
   useEffect(() => {
     setRevealedWordIndices(new Set());
@@ -310,7 +343,6 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
     const timer = setInterval(() => {
       setSecondsUntilNextRecall((prev) => {
         if (prev <= 1) {
-          // Pick least-recently reviewed or next verse in deck and display the periodic recall card
           setActiveMemoryIndex((curr) => (curr + 1) % memoryDeck.length);
           setRevealedWordIndices(new Set());
           setIsAllWordsRevealed(false);
@@ -543,6 +575,31 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
     const meta = KJV_BOOKS_METADATA.find((b) => b.book === selectedBook);
     return meta ? meta.chapters : [1];
   }, [selectedBook]);
+
+  // Step to Previous or Next available chapter across books
+  const handleStepChapter = (delta: -1 | 1) => {
+    const currentChIdx = availableChapters.indexOf(selectedChapter);
+    if (currentChIdx + delta >= 0 && currentChIdx + delta < availableChapters.length) {
+      setSelectedChapter(availableChapters[currentChIdx + delta]);
+      return;
+    }
+
+    const currentBookIdx = KJV_BOOKS_METADATA.findIndex(
+      (b) => b.book === selectedBook
+    );
+    if (currentBookIdx === -1) return;
+
+    const nextBookIdx =
+      (currentBookIdx + delta + KJV_BOOKS_METADATA.length) %
+      KJV_BOOKS_METADATA.length;
+    const nextBookMeta = KJV_BOOKS_METADATA[nextBookIdx];
+    setSelectedBook(nextBookMeta.book);
+    setSelectedChapter(
+      delta > 0
+        ? nextBookMeta.chapters[0]
+        : nextBookMeta.chapters[nextBookMeta.chapters.length - 1]
+    );
+  };
 
   // Verses in current book + chapter
   const chapterVerses = useMemo(() => {
@@ -867,15 +924,12 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
       className="relative flex flex-col h-full bg-white dark:bg-black border-r border-neutral-200 dark:border-neutral-800 select-none sm:select-text transition-colors"
     >
       {/* Top Study Control Bar: Book, Chapter, Verse Range, Quick Find, Memory Recall, Density Map & Search */}
-      <div className="p-4 border-b border-neutral-200 dark:border-neutral-800 space-y-3 bg-neutral-50/60 dark:bg-neutral-950">
+      <div className="p-3.5 border-b border-neutral-200 dark:border-neutral-800 space-y-2.5 bg-neutral-50/60 dark:bg-neutral-950">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 flex-wrap">
             <BookOpen className="w-4 h-4 text-neutral-700 dark:text-amber-400 shrink-0" />
-            <span className="text-xs font-semibold tracking-tight text-neutral-900 dark:text-white">
-              KJV Study Desk
-            </span>
-            <span aria-hidden="true" className="text-neutral-300 dark:text-neutral-700">
-              ·
+            <span className="text-xs font-bold tracking-tight text-neutral-900 dark:text-white">
+              KJV Reader
             </span>
             <button
               type="button"
@@ -884,7 +938,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
               className="px-2 py-1 text-[11px] font-semibold bg-neutral-900 dark:bg-amber-400 text-white dark:text-black rounded hover:bg-neutral-800 dark:hover:bg-amber-300 transition-colors flex items-center gap-1 whitespace-nowrap shrink-0"
             >
               <Compass className="w-3 h-3" />
-              <span>Quick Find</span>
+              <span>Quick Jump</span>
               <span className="font-mono-tabular text-[10px] text-neutral-300 dark:text-neutral-900">
                 ⌘K
               </span>
@@ -919,20 +973,15 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
             >
               <BarChart3 className="w-3 h-3" />
               <span>Density Map</span>
-              {isDensitySidebarOpen ? (
-                <ChevronRight className="w-3 h-3" />
-              ) : (
-                <ChevronLeft className="w-3 h-3" />
-              )}
             </button>
           </div>
 
           {/* Swatch Filter Buttons */}
-          <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-900 p-0.5 rounded border border-neutral-200 dark:border-neutral-800">
+          <div className="flex items-center gap-0.5 bg-neutral-100 dark:bg-neutral-900 p-0.5 rounded border border-neutral-200 dark:border-neutral-800">
             <button
               type="button"
               onClick={() => setFilterSwatch("all")}
-              className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
+              className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
                 filterSwatch === "all"
                   ? "bg-neutral-900 dark:bg-white text-white dark:text-black"
                   : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
@@ -948,7 +997,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
                   setFilterSwatch((prev) => (prev === sw.color ? "all" : sw.color))
                 }
                 title={`Filter by ${sw.label}`}
-                className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
+                className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
                   filterSwatch === sw.color
                     ? "bg-neutral-900 dark:bg-white text-white dark:text-black"
                     : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
@@ -960,10 +1009,10 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
           </div>
         </div>
 
-        {/* Selectors Row: Book, Chapter, Verse Range */}
-        <div className="grid grid-cols-12 gap-2 items-center">
+        {/* Selectors Row: Book, Chapter (+ Prev/Next), Verse Range */}
+        <div className="grid grid-cols-12 gap-2 items-end">
           <div className="col-span-5">
-            <label className="block text-[11px] font-medium text-neutral-500 dark:text-neutral-400 mb-1">
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 mb-1">
               Book
             </label>
             <select
@@ -977,7 +1026,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
                   setSelectedChapter(meta.chapters[0]);
                 }
               }}
-              className="w-full h-9 px-2.5 text-xs font-medium bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
+              className="w-full h-8 px-2 text-xs font-medium bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
             >
               {KJV_BOOKS_METADATA.map((b) => (
                 <option key={b.book} value={b.book}>
@@ -988,26 +1037,44 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
           </div>
 
           <div className="col-span-3">
-            <label className="block text-[11px] font-medium text-neutral-500 dark:text-neutral-400 mb-1">
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 mb-1">
               Chapter
             </label>
-            <select
-              aria-label="Select Chapter"
-              value={selectedChapter}
-              onChange={(e) => setSelectedChapter(Number(e.target.value))}
-              className="w-full h-9 px-2.5 text-xs font-mono-tabular font-medium bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
-            >
-              {availableChapters.map((ch) => (
-                <option key={ch} value={ch}>
-                  Ch. {ch}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => handleStepChapter(-1)}
+                title="Previous Chapter"
+                className="h-8 px-1.5 bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <select
+                aria-label="Select Chapter"
+                value={selectedChapter}
+                onChange={(e) => setSelectedChapter(Number(e.target.value))}
+                className="w-full h-8 px-1.5 text-xs font-mono-tabular font-medium bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
+              >
+                {availableChapters.map((ch) => (
+                  <option key={ch} value={ch}>
+                    Ch. {ch}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => handleStepChapter(1)}
+                title="Next Chapter"
+                className="h-8 px-1.5 bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="col-span-4">
-            <label className="block text-[11px] font-medium text-neutral-500 dark:text-neutral-400 mb-1">
-              Verse Range
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 mb-1">
+              Verse Filter
             </label>
             <div className="flex items-center gap-1">
               <select
@@ -1018,7 +1085,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
                   setVerseRangeStart(val);
                   if (val > verseRangeEnd) setVerseRangeEnd(val);
                 }}
-                className="w-full h-9 px-1.5 text-xs font-mono-tabular bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
+                className="w-full h-8 px-1 text-xs font-mono-tabular bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
               >
                 {chapterVerses.map((v) => (
                   <option key={v.verse} value={v.verse}>
@@ -1035,7 +1102,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
                   setVerseRangeEnd(val);
                   if (val < verseRangeStart) setVerseRangeStart(val);
                 }}
-                className="w-full h-9 px-1.5 text-xs font-mono-tabular bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
+                className="w-full h-8 px-1 text-xs font-mono-tabular bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
               >
                 {chapterVerses.map((v) => (
                   <option key={v.verse} value={v.verse}>
@@ -1055,7 +1122,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Instant KJV keyword or phrase search (e.g. 'propitiation', 'conquerors', 'shepherd')..."
-            className="w-full h-9 pl-8 pr-8 text-xs bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
+            className="w-full h-8 pl-8 pr-8 text-xs bg-white dark:bg-black border border-neutral-300 dark:border-neutral-800 rounded text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:border-neutral-900 dark:focus:border-amber-400"
           />
           {searchQuery && (
             <button
@@ -1070,7 +1137,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
         </div>
       </div>
 
-      {/* Periodic Pulpit Recall Banner (Displays Periodically with Missing Words) */}
+      {/* Pulpit Memory Recall Banner (Displays when opened or when periodic timer triggers) */}
       {isPeriodicRecallPopupOpen && activeMemoryVerse && (
         <div className="mx-4 mt-3 p-3.5 bg-neutral-900 dark:bg-neutral-950 text-white border border-neutral-800 dark:border-amber-400/70 rounded shadow-lg space-y-2.5 shrink-0">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1243,15 +1310,33 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
             </div>
           ) : (
             <>
-              {/* Active Chapter Header */}
-              <div className="flex items-center justify-between pb-2 border-b border-neutral-100 dark:border-neutral-800">
-                <h2 className="text-base font-bold tracking-tight text-neutral-900 dark:text-white">
-                  {selectedBook} {selectedChapter}
-                </h2>
+              {/* Active Chapter Header with Prev/Next Chapter Quick Buttons */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-neutral-100 dark:border-neutral-800">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold tracking-tight text-neutral-900 dark:text-white">
+                    {selectedBook} {selectedChapter}
+                  </h2>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleStepChapter(-1)}
+                      className="px-2 py-0.5 text-[11px] font-medium bg-neutral-100 dark:bg-neutral-900 hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-300 rounded transition-colors"
+                    >
+                      ‹ Prev Ch.
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStepChapter(1)}
+                      className="px-2 py-0.5 text-[11px] font-medium bg-neutral-100 dark:bg-neutral-900 hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-700 dark:text-neutral-300 rounded transition-colors"
+                    >
+                      Next Ch. ›
+                    </button>
+                  </div>
+                </div>
                 <div className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
                   <span className="font-mono-tabular">{visibleVerses.length} verses</span>
                   <span aria-hidden="true">·</span>
-                  <span>Click verse for TSK, Highlights &amp; Memory Deck</span>
+                  <span>Click any verse to highlight</span>
                 </div>
               </div>
 
@@ -1420,10 +1505,10 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
         {isDensitySidebarOpen && (
           <aside
             aria-label="Visual Reference Density Map"
-            className="w-[205px] xl:w-[225px] border-l border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-950 flex flex-col shrink-0 overflow-hidden"
+            className="w-[195px] xl:w-[215px] border-l border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-950 flex flex-col shrink-0 overflow-hidden"
           >
             {/* Sidebar Header */}
-            <div className="p-3 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black space-y-2">
+            <div className="p-2.5 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black space-y-2">
               <div className="flex items-center justify-between gap-1">
                 <div className="flex items-center gap-1.5">
                   <BarChart3 className="w-3.5 h-3.5 text-neutral-900 dark:text-amber-400 shrink-0" />
@@ -1431,9 +1516,14 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
                     Reference Density
                   </h3>
                 </div>
-                <span className="text-[10px] font-mono-tabular text-neutral-500 dark:text-neutral-400">
-                  {sermonsForDensity.length} sermons
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsDensitySidebarOpen(false)}
+                  title="Collapse Reference Density Map"
+                  className="text-neutral-400 hover:text-neutral-800 dark:hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
 
               {/* Passages vs Books Switcher */}
@@ -1500,7 +1590,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
             </div>
 
             {/* Density Bar Graph List */}
-            <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+            <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
               {densityMode === "passages" ? (
                 passageDensity.length === 0 ? (
                   <p className="text-[11px] text-neutral-500 dark:text-neutral-400 py-6 text-center">
@@ -1539,7 +1629,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
                           </span>
                         </div>
 
-                        <div className="h-2 w-full bg-neutral-100 dark:bg-neutral-900 rounded-xs overflow-hidden">
+                        <div className="h-1.5 w-full bg-neutral-100 dark:bg-neutral-900 rounded-xs overflow-hidden">
                           <div
                             style={{ width: `${widthPct}%` }}
                             className={`h-full transition-all ${
@@ -1591,7 +1681,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
                         </span>
                       </div>
 
-                      <div className="h-2 w-full bg-neutral-100 dark:bg-neutral-900 rounded-xs overflow-hidden">
+                      <div className="h-1.5 w-full bg-neutral-100 dark:bg-neutral-900 rounded-xs overflow-hidden">
                         <div
                           style={{ width: `${widthPct}%` }}
                           className={`h-full transition-all ${
@@ -1615,15 +1705,15 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
               )}
             </div>
 
-            <div className="px-3 py-2 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black text-[10px] text-neutral-500 dark:text-neutral-400 leading-tight">
-              Live IndexedDB density map across saved sermons. Click any bar to jump.
+            <div className="px-2.5 py-2 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black text-[10px] text-neutral-500 dark:text-neutral-400 leading-tight">
+              Click any bar to jump KJV reader.
             </div>
           </aside>
         )}
       </div>
 
       {/* Bottom Study Drawer: TSK Cross-References, Margin Notes Tray & Memory Deck */}
-      <div className="h-[290px] border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-950 flex flex-col shrink-0">
+      <div className="h-[270px] border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-950 flex flex-col shrink-0">
         {/* Drawer Header Tabs */}
         <div className="flex items-center justify-between px-4 py-2 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black gap-2">
           <div className="flex items-center gap-1 bg-neutral-100 dark:bg-neutral-900 p-0.5 rounded border border-neutral-200 dark:border-neutral-800">
@@ -1666,17 +1756,17 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
           {activeBottomTab === "memory" ? (
             <div className="flex items-center gap-1.5 text-[11px] font-mono-tabular text-neutral-600 dark:text-neutral-400">
               <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
-              <span>Periodic Recall:</span>
+              <span>Auto-Prompt:</span>
               <select
                 aria-label="Periodic Recall Interval"
                 value={periodicIntervalSec}
                 onChange={(e) => setPeriodicIntervalSec(Number(e.target.value))}
                 className="h-6 px-1.5 text-[11px] bg-neutral-100 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded text-neutral-900 dark:text-white"
               >
+                <option value={0}>On-Demand Only</option>
                 <option value={45}>Every 45s ({secondsUntilNextRecall}s)</option>
                 <option value={60}>Every 1m ({secondsUntilNextRecall}s)</option>
                 <option value={120}>Every 2m ({secondsUntilNextRecall}s)</option>
-                <option value={0}>Paused</option>
               </select>
             </div>
           ) : (
@@ -1739,7 +1829,7 @@ export const ScriptureDesk: React.FC<ScriptureDeskProps> = ({
                         <span>
                           {insertedFeedbackId === tsk.ref
                             ? "Inserted!"
-                            : "Insert Scripture Card into Manuscript"}
+                            : "Insert Scripture Card"}
                         </span>
                       </button>
                     </div>

@@ -27,12 +27,57 @@ function getGeminiClient() {
   });
 }
 
+/**
+ * Safely parses JSON from Gemini responses, stripping any accidental markdown code fences.
+ */
+function parseGeminiJson<T = any>(rawText: string | undefined): T {
+  const cleaned = (rawText ?? "{}")
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  return JSON.parse(cleaned || "{}");
+}
+
+/**
+ * Calls generateContent with primary model and falls back to gemini-flash-latest if needed.
+ */
+async function generateContentWithFallback(
+  ai: GoogleGenAI,
+  params: {
+    contents: any;
+    config: any;
+  }
+) {
+  try {
+    return await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      contents: params.contents,
+      config: params.config,
+    });
+  } catch (primaryErr) {
+    console.warn(
+      "Primary model gemini-3.8-flash failed, retrying with gemini-flash-latest:",
+      primaryErr
+    );
+    return await ai.models.generateContent({
+      model: "gemini-flash-latest",
+      contents: params.contents,
+      config: params.config,
+    });
+  }
+}
+
 // 1. Homiletic Outline Generator Endpoint
 app.post("/api/gemini/outline", async (req, res) => {
   try {
-    const { passageOrTopic, mode, additionalNotes } = req.body;
-    if (!passageOrTopic || !mode) {
-      res.status(400).json({ error: "Passage/topic and preaching mode are required." });
+    const { passageOrTopic, mode, preachingMode, additionalNotes } = req.body;
+    const resolvedMode = mode || preachingMode || "Expository";
+
+    if (!passageOrTopic || ! String(passageOrTopic).trim()) {
+      res
+        .status(400)
+        .json({ error: "Please enter a KJV Scripture passage or doctrinal topic." });
       return;
     }
 
@@ -47,15 +92,16 @@ app.post("/api/gemini/outline", async (req, res) => {
         "Structure as a systematic Topical sermon: formulate a clear core doctrinal proposition, support each division with multi-testament King James Version (KJV) Scripture citations, build logical argument steps, and write smooth homiletical transitions between points.",
     };
 
-    const prompt = `Create a comprehensive, deeply researched homiletical sermon outline for: "${passageOrTopic}".
-Preaching Mode: ${mode}
-Mode Methodology: ${modeInstructions[mode] || modeInstructions.Expository}
+    const prompt = `Create a comprehensive, deeply researched homiletical sermon outline for: "${String(
+      passageOrTopic
+    ).trim()}".
+Preaching Mode: ${resolvedMode}
+Mode Methodology: ${modeInstructions[resolvedMode] || modeInstructions.Expository}
 ${additionalNotes ? `Preacher's Additional Focus / Notes: ${additionalNotes}` : ""}
 
 Use King James Version (KJV) phrasing and references. Ensure every division includes specific KJV verse coordinates, clear exposition, illustrative imagery, and direct pastoral application.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+    const response = await generateContentWithFallback(ai, {
       contents: prompt,
       config: {
         systemInstruction:
@@ -74,25 +120,30 @@ Use King James Version (KJV) phrasing and references. Ensure every division incl
             },
             bigIdea: {
               type: Type.STRING,
-              description: "Single-sentence homiletical Big Idea / Central Doctrinal Proposition.",
+              description:
+                "Single-sentence homiletical Big Idea / Central Doctrinal Proposition.",
             },
             hook: {
               type: Type.STRING,
-              description: "Opening homiletical hook or introduction that arrests attention and surfaces the human need.",
+              description:
+                "Opening homiletical hook or introduction that arrests attention and surfaces the human need.",
             },
             context: {
               type: Type.STRING,
-              description: "Historical, redemptive, and literary context of the passage or doctrine.",
+              description:
+                "Historical, redemptive, and literary context of the passage or doctrine.",
             },
             divisions: {
               type: Type.ARRAY,
-              description: "Main homiletical divisions / points of the sermon (typically 3 to 4 main points).",
+              description:
+                "Main homiletical divisions / points of the sermon (typically 3 to 4 main points).",
               items: {
                 type: Type.OBJECT,
                 properties: {
                   heading: {
                     type: Type.STRING,
-                    description: "Main point heading (e.g., I. The Sovereign Purpose of Grace).",
+                    description:
+                      "Main point heading (e.g., I. The Sovereign Purpose of Grace).",
                   },
                   scriptureRef: {
                     type: Type.STRING,
@@ -100,27 +151,37 @@ Use King James Version (KJV) phrasing and references. Ensure every division incl
                   },
                   exposition: {
                     type: Type.STRING,
-                    description: "Exegetical explanation, clause analysis, or doctrinal argument.",
+                    description:
+                      "Exegetical explanation, clause analysis, or doctrinal argument.",
                   },
                   illustration: {
                     type: Type.STRING,
-                    description: "Vivid historical, biblical, or everyday metaphor/illustration for this point.",
+                    description:
+                      "Vivid historical, biblical, or everyday metaphor/illustration for this point.",
                   },
                   application: {
                     type: Type.STRING,
-                    description: "Direct pastoral application to the hearer's conscience and life.",
+                    description:
+                      "Direct pastoral application to the hearer's conscience and life.",
                   },
                   transition: {
                     type: Type.STRING,
                     description: "Smooth homiletical bridge leading to the next point.",
                   },
                 },
-                required: ["heading", "scriptureRef", "exposition", "illustration", "application"],
+                required: [
+                  "heading",
+                  "scriptureRef",
+                  "exposition",
+                  "illustration",
+                  "application",
+                ],
               },
             },
             conclusionAndCallToAction: {
               type: Type.STRING,
-              description: "Climactic summary and urgent pastoral call to action / response.",
+              description:
+                "Climactic summary and urgent pastoral call to action / response.",
             },
           },
           required: [
@@ -136,8 +197,7 @@ Use King James Version (KJV) phrasing and references. Ensure every division incl
       },
     });
 
-    const jsonText = (response.text ?? "{}").trim();
-    const parsed = JSON.parse(jsonText);
+    const parsed = parseGeminiJson(response.text);
     res.json(parsed);
   } catch (error: any) {
     console.error("Error in /api/gemini/outline:", error);
@@ -150,9 +210,13 @@ Use King James Version (KJV) phrasing and references. Ensure every division incl
 // 1b. Sermon Rough Draft & Thought Organizer Endpoint
 app.post("/api/gemini/organize-draft", async (req, res) => {
   try {
-    const { roughDraft, preachingMode, primaryText, currentTitle } = req.body;
-    if (!roughDraft || !roughDraft.trim()) {
-      res.status(400).json({ error: "Please enter your rough draft or sermon ideas first." });
+    const { roughDraft, preachingMode, mode, primaryText, currentTitle } = req.body;
+    const resolvedMode = preachingMode || mode || "Expository";
+
+    if (!roughDraft || !String(roughDraft).trim()) {
+      res
+        .status(400)
+        .json({ error: "Please enter your rough draft or sermon ideas first." });
       return;
     }
 
@@ -162,10 +226,10 @@ app.post("/api/gemini/organize-draft", async (req, res) => {
 
 PREACHER'S ROUGH DRAFT & RAW THOUGHTS:
 """
-${roughDraft.trim()}
+${String(roughDraft).trim()}
 """
 
-Preferred Preaching Style: ${preachingMode || "Expository"}
+Preferred Preaching Style: ${resolvedMode}
 ${primaryText ? `Current Primary Scripture Anchor: ${primaryText}` : ""}
 ${currentTitle ? `Working Title: ${currentTitle}` : ""}
 
@@ -178,8 +242,7 @@ Please organize these raw thoughts and return a complete homiletical study packa
 6. 4 to 5 additional supporting King James Version (KJV) reference scriptures (including the exact KJV verse text and why it reinforces the sermon).
 7. 2 reverent, Scripture-saturated closing pastoral prayers (e.g., a Prayer of Application & Consecration and a Covenantal Benediction Prayer) using classic, warm devotional language.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+    const response = await generateContentWithFallback(ai, {
       contents: prompt,
       config: {
         systemInstruction:
@@ -200,7 +263,8 @@ Please organize these raw thoughts and return a complete homiletical study packa
                   },
                   angle: {
                     type: Type.STRING,
-                    description: "Homiletical angle (e.g., Doctrinal, Pastoral, Expository, KJV Phrase).",
+                    description:
+                      "Homiletical angle (e.g., Doctrinal, Pastoral, Expository, KJV Phrase).",
                   },
                 },
                 required: ["title", "angle"],
@@ -208,25 +272,30 @@ Please organize these raw thoughts and return a complete homiletical study packa
             },
             primaryTextSuggestion: {
               type: Type.STRING,
-              description: "Primary KJV Scripture passage reference (e.g., Psalm 23:1-6 or Romans 8:28-39).",
+              description:
+                "Primary KJV Scripture passage reference (e.g., Psalms 23:1-6 or Romans 8:28-39).",
             },
             organizedBigIdea: {
               type: Type.STRING,
-              description: "Single-sentence central homiletical Big Idea distilled from the rough draft.",
+              description:
+                "Single-sentence central homiletical Big Idea distilled from the rough draft.",
             },
             thoughtSynthesis: {
               type: Type.STRING,
-              description: "2-3 sentence editorial summary of how the preacher's scattered notes were organized into a unified message.",
+              description:
+                "2-3 sentence editorial summary of how the preacher's scattered notes were organized into a unified message.",
             },
             organizedDivisions: {
               type: Type.ARRAY,
-              description: "Logical homiletical outline divisions organizing the preacher's ideas.",
+              description:
+                "Logical homiletical outline divisions organizing the preacher's ideas.",
               items: {
                 type: Type.OBJECT,
                 properties: {
                   heading: {
                     type: Type.STRING,
-                    description: "Main point heading (e.g., I. The Shepherd's Provision in the Wilderness).",
+                    description:
+                      "Main point heading (e.g., I. The Shepherd's Provision in the Wilderness).",
                   },
                   scriptureRef: {
                     type: Type.STRING,
@@ -234,7 +303,8 @@ Please organize these raw thoughts and return a complete homiletical study packa
                   },
                   exposition: {
                     type: Type.STRING,
-                    description: "Developed exposition organizing the preacher's raw thoughts for this point.",
+                    description:
+                      "Developed exposition organizing the preacher's raw thoughts for this point.",
                   },
                   application: {
                     type: Type.STRING,
@@ -246,7 +316,8 @@ Please organize these raw thoughts and return a complete homiletical study packa
             },
             illustrations: {
               type: Type.ARRAY,
-              description: "3 vivid illustrations that illuminate the preacher's core themes.",
+              description:
+                "3 vivid illustrations that illuminate the preacher's core themes.",
               items: {
                 type: Type.OBJECT,
                 properties: {
@@ -256,11 +327,13 @@ Please organize these raw thoughts and return a complete homiletical study packa
                   },
                   category: {
                     type: Type.STRING,
-                    description: "Type of illustration (e.g., Historical, Biblical Parallel, Everyday Metaphor).",
+                    description:
+                      "Type of illustration (e.g., Historical, Biblical Parallel, Everyday Metaphor).",
                   },
                   narrative: {
                     type: Type.STRING,
-                    description: "Full ready-to-preach narrative of the illustration and its moral pivot.",
+                    description:
+                      "Full ready-to-preach narrative of the illustration and its moral pivot.",
                   },
                 },
                 required: ["title", "category", "narrative"],
@@ -268,7 +341,8 @@ Please organize these raw thoughts and return a complete homiletical study packa
             },
             additionalScriptures: {
               type: Type.ARRAY,
-              description: "4-5 supporting KJV cross-reference scriptures with full KJV text.",
+              description:
+                "4-5 supporting KJV cross-reference scriptures with full KJV text.",
               items: {
                 type: Type.OBJECT,
                 properties: {
@@ -282,7 +356,8 @@ Please organize these raw thoughts and return a complete homiletical study packa
                   },
                   homileticConnection: {
                     type: Type.STRING,
-                    description: "How this verse strengthens or illuminates the preacher's rough draft.",
+                    description:
+                      "How this verse strengthens or illuminates the preacher's rough draft.",
                   },
                 },
                 required: ["ref", "kjvText", "homileticConnection"],
@@ -296,15 +371,18 @@ Please organize these raw thoughts and return a complete homiletical study packa
                 properties: {
                   title: {
                     type: Type.STRING,
-                    description: "Title of the closing prayer (e.g., Prayer of Humble Trust & Consecration).",
+                    description:
+                      "Title of the closing prayer (e.g., Prayer of Humble Trust & Consecration).",
                   },
                   tone: {
                     type: Type.STRING,
-                    description: "Pastoral tone (e.g., Penitential & Comforting, Doxological & Sending).",
+                    description:
+                      "Pastoral tone (e.g., Penitential & Comforting, Doxological & Sending).",
                   },
                   prayerText: {
                     type: Type.STRING,
-                    description: "Full spoken closing prayer written in reverent, Scripture-rich language.",
+                    description:
+                      "Full spoken closing prayer written in reverent, Scripture-rich language.",
                   },
                 },
                 required: ["title", "tone", "prayerText"],
@@ -325,8 +403,7 @@ Please organize these raw thoughts and return a complete homiletical study packa
       },
     });
 
-    const jsonText = (response.text ?? "{}").trim();
-    const parsed = JSON.parse(jsonText);
+    const parsed = parseGeminiJson(response.text);
     res.json(parsed);
   } catch (error: any) {
     console.error("Error in /api/gemini/organize-draft:", error);
@@ -339,8 +416,14 @@ Please organize these raw thoughts and return a complete homiletical study packa
 // 2. Multimodal Audio Transcription & Homiletical Delivery Comparison Endpoint
 app.post("/api/gemini/transcribe-analyze", async (req, res) => {
   try {
-    const { audioBase64, mimeType, sermonTitle, primaryText, manuscriptText, outlineSummary } =
-      req.body;
+    const {
+      audioBase64,
+      mimeType,
+      sermonTitle,
+      primaryText,
+      manuscriptText,
+      outlineSummary,
+    } = req.body;
 
     if (!audioBase64) {
       res.status(400).json({ error: "Recorded audio data is required." });
@@ -376,14 +459,17 @@ ${manuscriptText || "No prose manuscript."}
           parts: [
             audioPart,
             {
-              text: `Transcribe this preached sermon audio accurately. Use the following planned sermon manuscript and Scripture references as contextual vocabulary ground truth so that all biblical names, KJV archaic terms (e.g., propitiation, sanctification, wherewithal,eth/est endings), and scripture citations are spelled accurately:\n\n${groundTruthContext}`,
+              text: `Transcribe this preached sermon audio accurately. Use the following planned sermon manuscript and Scripture references as contextual vocabulary ground truth so that all biblical names, KJV archaic terms (e.g., propitiation, sanctification, wherewithal, eth/est endings), and scripture citations are spelled accurately:\n\n${groundTruthContext}`,
             },
           ],
         },
       });
       rawTranscript = (transcribeResp.text ?? "").trim();
     } catch (transcribeErr) {
-      console.warn("gemini-3.5-transcribe fallback to multimodal analysis:", transcribeErr);
+      console.warn(
+        "gemini-3.5-transcribe fallback to multimodal analysis:",
+        transcribeErr
+      );
     }
 
     // Step 2: Produce structured timestamped transcript + Homiletical Delivery Comparison
@@ -412,8 +498,7 @@ Tasks:
    - Pacing, Clarity & Homiletical Tone assessment.`,
     });
 
-    const analysisResponse = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+    const analysisResponse = await generateContentWithFallback(ai, {
       contents: { parts: analysisParts },
       config: {
         systemInstruction:
@@ -434,11 +519,13 @@ Tasks:
                   },
                   text: {
                     type: Type.STRING,
-                    description: "Clean spoken text with accurate KJV and biblical terminology.",
+                    description:
+                      "Clean spoken text with accurate KJV and biblical terminology.",
                   },
                   matchedSection: {
                     type: Type.STRING,
-                    description: "Optional corresponding section from the manuscript or 'Spontaneous / Ad-lib'.",
+                    description:
+                      "Optional corresponding section from the manuscript or 'Spontaneous / Ad-lib'.",
                   },
                 },
                 required: ["timestamp", "text"],
@@ -446,34 +533,41 @@ Tasks:
             },
             comparison: {
               type: Type.OBJECT,
-              description: "Homiletical Delivery Comparison between planned manuscript and pulpit delivery.",
+              description:
+                "Homiletical Delivery Comparison between planned manuscript and pulpit delivery.",
               properties: {
                 executiveSummary: {
                   type: Type.STRING,
-                  description: "Executive overview comparing the prepared manuscript with the spoken pulpit delivery.",
+                  description:
+                    "Executive overview comparing the prepared manuscript with the spoken pulpit delivery.",
                 },
                 alignmentScore: {
                   type: Type.INTEGER,
-                  description: "Percentage alignment (0-100) between planned structure and delivered sermon.",
+                  description:
+                    "Percentage alignment (0-100) between planned structure and delivered sermon.",
                 },
                 deliveredPoints: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
-                  description: "Key points and scriptures from the manuscript that were effectively delivered.",
+                  description:
+                    "Key points and scriptures from the manuscript that were effectively delivered.",
                 },
                 skippedPoints: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
-                  description: "Planned points, clauses, or illustrations in the manuscript that were skipped or abbreviated.",
+                  description:
+                    "Planned points, clauses, or illustrations in the manuscript that were skipped or abbreviated.",
                 },
                 spontaneousAdLibs: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
-                  description: "Spontaneous ad-libs, unscripted pastoral exhortations, or extra cross-references added live.",
+                  description:
+                    "Spontaneous ad-libs, unscripted pastoral exhortations, or extra cross-references added live.",
                 },
                 pacingAndDeliveryNotes: {
                   type: Type.STRING,
-                  description: "Evaluation of pacing, emphasis, transitions, and rhetorical cadence.",
+                  description:
+                    "Evaluation of pacing, emphasis, transitions, and rhetorical cadence.",
                 },
               },
               required: [
@@ -491,7 +585,7 @@ Tasks:
       },
     });
 
-    const resultJson = JSON.parse((analysisResponse.text ?? "{}").trim());
+    const resultJson = parseGeminiJson(analysisResponse.text);
     res.json(resultJson);
   } catch (error: any) {
     console.error("Error in /api/gemini/transcribe-analyze:", error);

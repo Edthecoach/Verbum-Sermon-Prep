@@ -1,5 +1,17 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Sun, Moon, HelpCircle } from "lucide-react";
+import {
+  Sun,
+  Moon,
+  HelpCircle,
+  BookOpen,
+  Columns2,
+  PanelLeft,
+  PanelRight,
+  Mic,
+  Smartphone,
+  Monitor,
+  CheckCircle2,
+} from "lucide-react";
 import {
   db,
   initializeDatabase,
@@ -10,14 +22,17 @@ import {
   type PreachingMode,
 } from "./db/db";
 import { ScriptureDesk } from "./components/ScriptureDesk";
-import { HomileticEditor } from "./components/HomileticEditor";
+import {
+  HomileticEditor,
+  type EditorSubMode,
+} from "./components/HomileticEditor";
 import { PulpitView } from "./components/PulpitView";
 import { MobileRemoteView } from "./components/MobileRemoteView";
 import { AudioTranscriptionModal } from "./components/AudioTranscriptionModal";
 import { HowToUseModal } from "./components/HowToUseModal";
 
 /**
- * Generates a valid minimal 1.5-second WAV base64 audio buffer as a fallback
+ * Generates a valid minimal 1-second WAV base64 audio buffer as a fallback
  * when run in a headless/sandboxed browser without a physical microphone device,
  * ensuring the MediaRecorder -> IndexedDB -> Gemini Transcription pipeline works everywhere.
  */
@@ -97,6 +112,35 @@ export default function App() {
     return "desk";
   });
 
+  // Controlled Homiletic Editor sub-mode so top workflow bar can jump directly to any step
+  const [editorMode, setEditorMode] = useState<EditorSubMode>("outline");
+
+  // Desktop column layout mode: "split" (5/7 columns) | "scripture" (100% KJV) | "editor" (100% Editor)
+  const [deskLayoutMode, setDeskLayoutMode] = useState<
+    "split" | "scripture" | "editor"
+  >("split");
+
+  // Mobile/Tablet responsive column switcher when in Study Desk on narrow screens
+  const [mobileColumnTab, setMobileColumnTab] = useState<"scripture" | "editor">(
+    "scripture"
+  );
+
+  // External Scripture Jump Request (e.g., clicking a verse badge in HomileticEditor jumps the KJV Reader)
+  const [externalJumpRef, setExternalJumpRef] = useState<{
+    ref: string;
+    timestamp: number;
+  } | null>(null);
+
+  // Subtle toast banner when a Scripture Card is inserted or jumped to
+  const [navNotice, setNavNotice] = useState<string | null>(null);
+
+  const showNotice = (msg: string) => {
+    setNavNotice(msg);
+    window.setTimeout(() => {
+      setNavNotice((prev) => (prev === msg ? null : prev));
+    }, 3200);
+  };
+
   const [initialRemoteRoom] = useState<string>(() => {
     const params = new URLSearchParams(window.location.search);
     return (
@@ -105,11 +149,6 @@ export default function App() {
       "KJV1"
     ).toUpperCase();
   });
-
-  // Mobile/Tablet responsive column switcher when in Study Desk on narrow screens
-  const [mobileColumnTab, setMobileColumnTab] = useState<"scripture" | "editor">(
-    "scripture"
-  );
 
   // Audio Recording, Post-Sermon Transcription & How To Use Guide Modals
   const [isAudioModalOpen, setIsAudioModalOpen] = useState<boolean>(false);
@@ -162,6 +201,7 @@ export default function App() {
     await db.sermons.put(newDoc);
     setSermons((prev) => [newDoc, ...prev]);
     setActiveSermonId(newDoc.id);
+    showNotice(`Initialized new ${templateMode} sermon`);
   };
 
   const handleDeleteSermon = async (id: string) => {
@@ -172,6 +212,28 @@ export default function App() {
     if (activeSermonId === id && remaining.length > 0) {
       setActiveSermonId(remaining[0].id);
     }
+  };
+
+  // Navigate to a specific editor step and ensure the editor column is visible
+  const handleSelectEditorStep = (mode: EditorSubMode) => {
+    setActiveView("desk");
+    setEditorMode(mode);
+    setMobileColumnTab("editor");
+    if (deskLayoutMode === "scripture") {
+      setDeskLayoutMode("split");
+    }
+  };
+
+  // Cross-column navigation: clicking any Scripture reference in the Editor jumps the KJV Reader
+  const handleNavigateToScriptureRef = (ref: string) => {
+    if (!ref.trim()) return;
+    setActiveView("desk");
+    setMobileColumnTab("scripture");
+    if (deskLayoutMode === "editor") {
+      setDeskLayoutMode("split");
+    }
+    setExternalJumpRef({ ref: ref.trim(), timestamp: Date.now() });
+    showNotice(`Jumped KJV Reader to ${ref.trim()}`);
   };
 
   // One-click "Insert Scripture Card into Manuscript" action from KJV Reader or TSK panel
@@ -203,6 +265,7 @@ export default function App() {
     };
 
     await handleUpdateSermon(updated);
+    showNotice(`Inserted ${ref} into Outline & Manuscript`);
   };
 
   // HTML5 MediaRecorder In-App Audio Capture
@@ -355,58 +418,152 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-white dark:bg-black text-neutral-900 dark:text-white transition-colors">
-      {/* Top Navigation Bar with Theme Toggle & How to Use Guide */}
-      <header className="flex items-center justify-between gap-8 px-6 py-3.5 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black shrink-0 transition-colors">
-        {/* Zone 1: Single text element brand wordmark */}
-        <a
-          href="/"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveView("desk");
-          }}
-          className="text-lg font-bold tracking-tight text-neutral-900 dark:text-white whitespace-nowrap shrink-0"
-        >
-          Verbum
-        </a>
+      {/* Top Navigation & Workflow Step Bar */}
+      <header className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black shrink-0 transition-colors">
+        {/* Left: Brand Wordmark + Desktop Layout Focus Switcher */}
+        <div className="flex items-center gap-4 shrink-0">
+          <a
+            href="/"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveView("desk");
+              setDeskLayoutMode("split");
+            }}
+            className="text-lg font-bold tracking-tight text-neutral-900 dark:text-white whitespace-nowrap shrink-0"
+          >
+            Verbum
+          </a>
 
-        {/* Zone 2: Concise single-line navigation links + How to Use + Theme Toggle */}
-        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-neutral-600 dark:text-neutral-400">
+          {/* Desktop Column Focus Switcher: Split Desk | KJV Full | Editor Full */}
+          <div
+            className="hidden lg:flex items-center bg-neutral-100 dark:bg-neutral-900 p-0.5 rounded border border-neutral-200 dark:border-neutral-800"
+            title="Switch between side-by-side Split Desk, full-width KJV Reader, or full-width Sermon Editor"
+          >
+            <button
+              type="button"
+              onClick={() => setDeskLayoutMode("split")}
+              className={`px-2.5 py-1 text-[11px] font-medium rounded flex items-center gap-1 whitespace-nowrap transition-colors ${
+                deskLayoutMode === "split"
+                  ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-amber-400 shadow-2xs"
+                  : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
+              }`}
+            >
+              <Columns2 className="w-3 h-3" />
+              <span>Split Desk</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeskLayoutMode("scripture")}
+              className={`px-2.5 py-1 text-[11px] font-medium rounded flex items-center gap-1 whitespace-nowrap transition-colors ${
+                deskLayoutMode === "scripture"
+                  ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-amber-400 shadow-2xs"
+                  : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
+              }`}
+            >
+              <PanelLeft className="w-3 h-3" />
+              <span>KJV Focus</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeskLayoutMode("editor")}
+              className={`px-2.5 py-1 text-[11px] font-medium rounded flex items-center gap-1 whitespace-nowrap transition-colors ${
+                deskLayoutMode === "editor"
+                  ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-amber-400 shadow-2xs"
+                  : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
+              }`}
+            >
+              <PanelRight className="w-3 h-3" />
+              <span>Editor Focus</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Center: Numbered 1-Click Homiletic Workflow Steps */}
+        <nav className="hidden md:flex items-center gap-1.5 text-xs font-medium overflow-x-auto">
           <button
             type="button"
-            onClick={() => setActiveView("desk")}
-            className="text-neutral-900 dark:text-amber-400 underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+            onClick={() => handleSelectEditorStep("rough_draft")}
+            className={`px-2.5 py-1.5 rounded transition-colors whitespace-nowrap shrink-0 ${
+              editorMode === "rough_draft"
+                ? "bg-neutral-900 dark:bg-amber-400 text-white dark:text-black font-semibold"
+                : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-white"
+            }`}
           >
-            Study Desk
+            1. Rough Draft
           </button>
+          <span className="text-neutral-300 dark:text-neutral-700">→</span>
+          <button
+            type="button"
+            onClick={() => handleSelectEditorStep("outline")}
+            className={`px-2.5 py-1.5 rounded transition-colors whitespace-nowrap shrink-0 ${
+              editorMode === "outline"
+                ? "bg-neutral-900 dark:bg-amber-400 text-white dark:text-black font-semibold"
+                : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-white"
+            }`}
+          >
+            2. Outline
+          </button>
+          <span className="text-neutral-300 dark:text-neutral-700">→</span>
+          <button
+            type="button"
+            onClick={() => handleSelectEditorStep("manuscript")}
+            className={`px-2.5 py-1.5 rounded transition-colors whitespace-nowrap shrink-0 ${
+              editorMode === "manuscript"
+                ? "bg-neutral-900 dark:bg-amber-400 text-white dark:text-black font-semibold"
+                : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-white"
+            }`}
+          >
+            3. Manuscript
+          </button>
+          <span className="text-neutral-300 dark:text-neutral-700">→</span>
           <button
             type="button"
             onClick={() => setActiveView("pulpit")}
-            className="hover:text-neutral-900 dark:hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+            className="px-2.5 py-1.5 rounded text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-white transition-colors flex items-center gap-1 whitespace-nowrap shrink-0"
           >
-            Lectern Pulpit
+            <Monitor className="w-3.5 h-3.5" />
+            <span>4. Pulpit</span>
           </button>
+          <span className="text-neutral-300 dark:text-neutral-700">→</span>
           <button
             type="button"
             onClick={() => setIsAudioModalOpen(true)}
-            className="hover:text-neutral-900 dark:hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+            className="px-2.5 py-1.5 rounded text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-white transition-colors flex items-center gap-1 whitespace-nowrap shrink-0"
           >
-            Audio &amp; Transcript
+            <Mic className="w-3.5 h-3.5" />
+            <span>5. Audio &amp; Transcript</span>
           </button>
+        </nav>
+
+        {/* Right: Remote, Guide, Theme Toggle & Primary Launch Pulpit CTA */}
+        <div className="flex items-center gap-2 shrink-0">
+          {navNotice && (
+            <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-[11px] font-medium text-emerald-800 dark:text-emerald-300 whitespace-nowrap">
+              <CheckCircle2 className="w-3 h-3 shrink-0" />
+              <span>{navNotice}</span>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={() => setActiveView("remote")}
-            className="hover:text-neutral-900 dark:hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+            title="Open Smartphone WebRTC Remote Controller"
+            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-900 rounded border border-neutral-200 dark:border-neutral-800 transition-colors whitespace-nowrap"
           >
-            Mobile Remote
+            <Smartphone className="w-3.5 h-3.5" />
+            <span>Remote</span>
           </button>
+
           <button
             type="button"
             onClick={() => setIsHowToUseOpen(true)}
-            className="hover:text-neutral-900 dark:hover:text-white hover:underline underline-offset-4 transition-colors flex items-center gap-1 whitespace-nowrap shrink-0"
+            title="Step-by-Step Guide & Shortcuts"
+            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-900 rounded border border-neutral-200 dark:border-neutral-800 transition-colors whitespace-nowrap"
           >
             <HelpCircle className="w-3.5 h-3.5" />
-            <span>How to Use</span>
+            <span className="hidden sm:inline">How to Use</span>
           </button>
+
           <button
             type="button"
             onClick={toggleThemeMode}
@@ -415,87 +572,82 @@ export default function App() {
                 ? "Switch Study Desk to OLED Dark Mode"
                 : "Switch Study Desk to Swiss Light Mode"
             }
-            className="hover:text-neutral-900 dark:hover:text-white hover:underline underline-offset-4 transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-900 rounded border border-neutral-200 dark:border-neutral-800 transition-colors whitespace-nowrap"
           >
             {themeMode === "light" ? (
               <>
                 <Moon className="w-3.5 h-3.5" />
-                <span>OLED Dark</span>
+                <span className="hidden sm:inline">OLED Dark</span>
               </>
             ) : (
               <>
                 <Sun className="w-3.5 h-3.5 text-amber-400" />
-                <span>Swiss Light</span>
+                <span className="hidden sm:inline">Swiss Light</span>
               </>
             )}
           </button>
-        </nav>
 
-        {/* Zone 3: 1 primary action */}
-        <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
             onClick={() => setActiveView("pulpit")}
-            className="px-4 py-2 text-xs font-semibold text-white dark:text-black bg-neutral-900 dark:bg-amber-400 rounded hover:bg-neutral-800 dark:hover:bg-amber-300 transition-colors whitespace-nowrap shrink-0"
+            className="px-3.5 py-1.5 text-xs font-semibold text-white dark:text-black bg-neutral-900 dark:bg-amber-400 rounded hover:bg-neutral-800 dark:hover:bg-amber-300 transition-colors whitespace-nowrap shrink-0"
           >
             Launch Lectern Pulpit
           </button>
         </div>
       </header>
 
-      {/* Mobile / Narrow Tablet Column Switcher Subbar */}
-      <div className="flex lg:hidden items-center justify-between px-4 py-2 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950 shrink-0">
-        <div className="flex items-center gap-1 bg-neutral-200 dark:bg-neutral-900 p-0.5 rounded">
+      {/* Mobile / Narrow Tablet Column & Step Switcher Subbar */}
+      <div className="flex lg:hidden items-center justify-between gap-2 px-3 py-2 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950 shrink-0 overflow-x-auto">
+        <div className="flex items-center gap-1 bg-neutral-200 dark:bg-neutral-900 p-0.5 rounded shrink-0">
           <button
             type="button"
             onClick={() => setMobileColumnTab("scripture")}
-            className={`px-3 py-1 text-xs font-medium rounded whitespace-nowrap ${
+            className={`px-2.5 py-1 text-xs font-medium rounded flex items-center gap-1 whitespace-nowrap ${
               mobileColumnTab === "scripture"
-                ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-amber-400"
                 : "text-neutral-600 dark:text-neutral-400"
             }`}
           >
-            KJV &amp; TSK Desk
+            <BookOpen className="w-3 h-3" />
+            <span>KJV Study</span>
           </button>
           <button
             type="button"
-            onClick={() => setMobileColumnTab("editor")}
-            className={`px-3 py-1 text-xs font-medium rounded whitespace-nowrap ${
-              mobileColumnTab === "editor"
-                ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+            onClick={() => handleSelectEditorStep("rough_draft")}
+            className={`px-2.5 py-1 text-xs font-medium rounded whitespace-nowrap ${
+              mobileColumnTab === "editor" && editorMode === "rough_draft"
+                ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-amber-400"
                 : "text-neutral-600 dark:text-neutral-400"
             }`}
           >
-            Homiletic Editor &amp; AI
+            1. Draft
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSelectEditorStep("outline")}
+            className={`px-2.5 py-1 text-xs font-medium rounded whitespace-nowrap ${
+              mobileColumnTab === "editor" && editorMode === "outline"
+                ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-amber-400"
+                : "text-neutral-600 dark:text-neutral-400"
+            }`}
+          >
+            2. Outline
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSelectEditorStep("manuscript")}
+            className={`px-2.5 py-1 text-xs font-medium rounded whitespace-nowrap ${
+              mobileColumnTab === "editor" && editorMode === "manuscript"
+                ? "bg-white dark:bg-neutral-800 text-neutral-900 dark:text-amber-400"
+                : "text-neutral-600 dark:text-neutral-400"
+            }`}
+          >
+            3. Manuscript
           </button>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setIsHowToUseOpen(true)}
-            className="px-2 py-1 text-xs font-medium border border-neutral-300 dark:border-neutral-700 rounded bg-white dark:bg-black text-neutral-800 dark:text-neutral-200 flex items-center gap-1 whitespace-nowrap"
-          >
-            <HelpCircle className="w-3 h-3" />
-            <span>Guide</span>
-          </button>
-          <button
-            type="button"
-            onClick={toggleThemeMode}
-            className="px-2 py-1 text-xs font-medium border border-neutral-300 dark:border-neutral-700 rounded bg-white dark:bg-black text-neutral-800 dark:text-neutral-200 flex items-center gap-1 whitespace-nowrap"
-          >
-            {themeMode === "light" ? (
-              <>
-                <Moon className="w-3 h-3" />
-                <span>OLED</span>
-              </>
-            ) : (
-              <>
-                <Sun className="w-3 h-3 text-amber-400" />
-                <span>Swiss</span>
-              </>
-            )}
-          </button>
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
             onClick={() => setIsAudioModalOpen(true)}
@@ -513,24 +665,45 @@ export default function App() {
         </div>
       </div>
 
-      {/* Main Two-Column Responsive Study & Homiletic Desk */}
+      {/* Main Responsive Study & Homiletic Desk */}
       <main className="flex-1 grid grid-cols-12 min-h-0 overflow-hidden bg-white dark:bg-black">
-        {/* Left Column: KJV Scripture Reader, Highlights, Margin Notes & TSK Cross-References */}
+        {/* Left Column: KJV Scripture Reader, Highlights, Margin Notes, TSK, Density Map & Memory Deck */}
         <div
-          className={`col-span-12 lg:col-span-5 h-full min-h-0 overflow-hidden ${
-            mobileColumnTab === "scripture" ? "block" : "hidden lg:block"
+          className={`col-span-12 ${
+            deskLayoutMode === "scripture"
+              ? "lg:col-span-12"
+              : deskLayoutMode === "editor"
+              ? "lg:hidden"
+              : "lg:col-span-5"
+          } h-full min-h-0 overflow-hidden ${
+            mobileColumnTab === "scripture"
+              ? "block"
+              : deskLayoutMode === "editor"
+              ? "hidden"
+              : "hidden lg:block"
           }`}
         >
           <ScriptureDesk
             onInsertScriptureCard={handleInsertScriptureCard}
             allSermons={sermons}
+            externalJumpRef={externalJumpRef}
           />
         </div>
 
-        {/* Right Column: Homiletic Editor (Outline & Manuscript) + Gemini Homiletic Assistant Sidebar */}
+        {/* Right Column: Homiletic Editor (Rough Draft Organizer, Outline & Manuscript) + AI Outliner */}
         <div
-          className={`col-span-12 lg:col-span-7 h-full min-h-0 overflow-hidden ${
-            mobileColumnTab === "editor" ? "block" : "hidden lg:block"
+          className={`col-span-12 ${
+            deskLayoutMode === "editor"
+              ? "lg:col-span-12"
+              : deskLayoutMode === "scripture"
+              ? "lg:hidden"
+              : "lg:col-span-7"
+          } h-full min-h-0 overflow-hidden ${
+            mobileColumnTab === "editor"
+              ? "block"
+              : deskLayoutMode === "scripture"
+              ? "hidden"
+              : "hidden lg:block"
           }`}
         >
           <HomileticEditor
@@ -540,6 +713,9 @@ export default function App() {
             onCreateNewSermon={handleCreateNewSermon}
             onDeleteSermon={handleDeleteSermon}
             onUpdateSermon={handleUpdateSermon}
+            activeEditorMode={editorMode}
+            onChangeEditorMode={setEditorMode}
+            onNavigateToScriptureRef={handleNavigateToScriptureRef}
           />
         </div>
       </main>
@@ -560,7 +736,12 @@ export default function App() {
       <HowToUseModal
         isOpen={isHowToUseOpen}
         onClose={() => setIsHowToUseOpen(false)}
-        onJumpToDesk={() => setActiveView("desk")}
+        onJumpToDesk={() => {
+          setActiveView("desk");
+          setMobileColumnTab("scripture");
+          if (deskLayoutMode === "editor") setDeskLayoutMode("split");
+        }}
+        onOpenEditorStep={(stepMode) => handleSelectEditorStep(stepMode)}
         onLaunchPulpit={() => setActiveView("pulpit")}
         onOpenAudioModal={() => setIsAudioModalOpen(true)}
         onOpenRemoteView={() => setActiveView("remote")}
