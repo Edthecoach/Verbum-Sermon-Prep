@@ -13,9 +13,18 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 
 function getGeminiClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const candidates = [
+    process.env.GEMINI_API_KEY,
+    process.env.API_KEY,
+    process.env.GOOGLE_API_KEY,
+  ];
+  const apiKey = candidates.find(
+    (k) => k && k.trim() !== "" && k.trim() !== "MY_GEMINI_API_KEY"
+  );
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured in environment.");
+    throw new Error(
+      "GEMINI_API_KEY is not configured. Add your Gemini API key in the AI Studio Secrets / Environment Variables panel (or in .env if running locally)."
+    );
   }
   return new GoogleGenAI({
     apiKey,
