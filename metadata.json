@@ -1,0 +1,6 @@
+{
+  "name": "Verbum — Homiletic Study & Pulpit Desk",
+  "description": "Single-user sermon preparation and pulpit delivery workstation combining KJV Scripture study, TSK cross-references, AI homiletical outlining, manuscript drafting, OLED lectern teleprompter, WebRTC mobile remote control, and post-sermon audio transcription.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
